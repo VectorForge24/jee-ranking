@@ -1,0 +1,55 @@
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Inter:wght@400;500;600;700&display=swap');
+
+/* ── CSS custom properties (overridden by JS per rank) ─────────── */
+:root {
+  --rank-color: #CD7F32;
+  --rank-glow:  #8B4513;
+  --rank-bg:    #1a0f00;
+}
+
+/* ── Base resets ────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  background: #06060a;
+  color: #e2e8f0;
+}
+
+/* ── Scrollbar — thin, rank-colored ────────────────────────────── */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--rank-color);
+  border-radius: 99px;
+  opacity: 0.4;
+}
+
+/* ── Focus ring ─────────────────────────────────────────────────── */
+:focus-visible {
+  outline: 2px solid var(--rank-color);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ── Reduced motion ─────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── Selection color ────────────────────────────────────────────── */
+::selection {
+  background: var(--rank-color);
+  color: #000;
+}
+
+/* ── Utility: hide scrollbar but keep scroll ───────────────────── */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
