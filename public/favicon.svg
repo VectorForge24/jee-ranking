@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <rect width="32" height="32" rx="6" fill="#06060a"/>
+  <polygon points="16,3 29,11 29,21 16,29 3,21 3,11" fill="#CD7F32" opacity="0.9"/>
+  <polygon points="16,8 24,13 24,19 16,24 8,19 8,13" fill="#06060a"/>
+  <text x="16" y="20" text-anchor="middle" font-family="monospace" font-weight="900" font-size="9" fill="#FFD700">JR</text>
+</svg>
