@@ -1,301 +1,151 @@
 /**
- * useDriveSync — with silent popup re-auth.
+ * useDriveSync — now powered by Firebase.
+ * Permanent sessions, no token expiry, auto-refresh handled by Firebase SDK.
  *
- * Token problem: Google implicit flow tokens expire after 1 hour.
- * Solution: instead of a full page redirect (which loses state + forces re-login UX),
- * we open a tiny popup window for silent re-auth. Since the user already consented,
- * Google closes it instantly and postMessages the new token back.
- * Zero disruption — user never sees a login page again after the first login.
+ * Reads tracker data from: users/{uid}/data/trackerData (written by tracker app)
+ * Writes ranking state to: users/{uid}/data/rankingData (owned by ranking app)
+ *
+ * Same Firebase project = same user UID in both apps.
+ * Students log in once across both apps forever.
  */
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect } from 'react';
+import { initializeApp, getApps } from 'firebase/app';
+import {
+  getAuth,
+  GoogleAuthProvider,
+  signInWithPopup,
+  signOut,
+  onAuthStateChanged,
+} from 'firebase/auth';
+import {
+  getFirestore,
+  doc,
+  getDoc,
+  setDoc,
+  serverTimestamp,
+} from 'firebase/firestore';
 
-const TRACKER_FILE = 'jee_tracker_backup.json';
-const RANKING_FILE = 'jee_ranking_data.json';
-const CLIENT_ID    = import.meta.env.VITE_GOOGLE_CLIENT_ID;
-const REDIRECT_URI = import.meta.env.VITE_REDIRECT_URI || window.location.origin;
-const EXPIRY_BUFFER = 3 * 60 * 1000; // treat token as expired 3 min early
+const firebaseConfig = {
+  apiKey:            import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain:        import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId:         import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket:     import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId:             import.meta.env.VITE_FIREBASE_APP_ID,
+};
 
-// ── Token storage helpers ─────────────────────────────────────────────────────
-function saveToken(accessToken, expiresInSec) {
-  const expiry = Date.now() + expiresInSec * 1000;
-  localStorage.setItem('ranking_token',  accessToken);
-  localStorage.setItem('ranking_expiry', String(expiry));
-  localStorage.setItem('ranking_loggedin', 'true');
-}
+const app  = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db   = getFirestore(app);
 
-function loadToken() {
-  const token  = localStorage.getItem('ranking_token');
-  const expiry = parseInt(localStorage.getItem('ranking_expiry') || '0', 10);
-  if (!token || Date.now() >= expiry - EXPIRY_BUFFER) return null;
-  return token;
-}
-
-function clearToken() {
-  localStorage.removeItem('ranking_token');
-  localStorage.removeItem('ranking_expiry');
-  localStorage.removeItem('ranking_loggedin');
-}
-
-function buildAuthUrl(redirectUri) {
-  const scope = encodeURIComponent(
-    'https://www.googleapis.com/auth/drive.appdata ' +
-    'https://www.googleapis.com/auth/userinfo.profile'
-  );
-  return (
-    `https://accounts.google.com/o/oauth2/v2/auth` +
-    `?client_id=${CLIENT_ID}` +
-    `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-    `&response_type=token` +
-    `&scope=${scope}` +
-    `&prompt=none`   // ← silent: skip consent screen if already approved
-  );
-}
-
-// ── Drive API helpers ─────────────────────────────────────────────────────────
-async function driveSearch(token, name) {
-  const r = await fetch(
-    `https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=name='${name}'&fields=files(id)`,
-    { headers: { Authorization: `Bearer ${token}` } }
-  );
-  if (r.status === 401) throw new Error('TOKEN_EXPIRED');
-  const d = await r.json();
-  return d.files?.[0]?.id || null;
-}
-
-async function driveDownload(token, fileId) {
-  const r = await fetch(
-    `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
-    { headers: { Authorization: `Bearer ${token}` } }
-  );
-  if (r.status === 401) throw new Error('TOKEN_EXPIRED');
-  if (!r.ok) throw new Error(`Download ${r.status}`);
-  return r.json();
-}
-
-async function driveCreate(token, name) {
-  const r = await fetch('https://www.googleapis.com/drive/v3/files', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, parents: ['appDataFolder'] }),
-  });
-  if (r.status === 401) throw new Error('TOKEN_EXPIRED');
-  const d = await r.json();
-  return d.id;
-}
-
-async function driveUpload(token, fileId, content) {
-  const r = await fetch(
-    `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`,
-    {
-      method: 'PATCH',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(content),
-    }
-  );
-  if (r.status === 401) throw new Error('TOKEN_EXPIRED');
-  if (!r.ok) throw new Error(`Upload ${r.status}`);
-}
-
-// ── Hook ──────────────────────────────────────────────────────────────────────
 export function useDriveSync() {
-  const [token,      setToken]      = useState(() => loadToken());
-  const [isLoggedIn, setIsLoggedIn] = useState(() => !!loadToken());
-  const [isSyncing,  setIsSyncing]  = useState(false);
-  const [syncError,  setSyncError]  = useState(null);
-  const refreshingRef = useRef(false);  // prevent concurrent refresh attempts
-  const popupRef      = useRef(null);
+  const [isLoggedIn,  setIsLoggedIn]  = useState(false);
+  const [token,       setToken]       = useState(null); // uid used as token
+  const [isSyncing,   setIsSyncing]   = useState(false);
+  const [syncError,   setSyncError]   = useState(null);
+  const [userProfile, setUserProfile] = useState(null);
 
-  // ── Silent popup re-auth ──────────────────────────────────────────────────
-  // Opens a popup, Google redirects to REDIRECT_URI with the new token in the hash.
-  // Our main page catches the postMessage and extracts the token.
-  const silentRefresh = useCallback(() => {
-    return new Promise((resolve) => {
-      if (refreshingRef.current) { resolve(null); return; }
-      refreshingRef.current = true;
-
-      // Close any existing popup
-      if (popupRef.current && !popupRef.current.closed) {
-        popupRef.current.close();
-      }
-
-      // Open tiny popup — prompt=none means it closes instantly if already consented
-      const popup = window.open(
-        buildAuthUrl(REDIRECT_URI),
-        'oauth_refresh',
-        'width=500,height=600,left=200,top=100'
-      );
-      popupRef.current = popup;
-
-      const timeout = setTimeout(() => {
-        refreshingRef.current = false;
-        if (!popup?.closed) popup?.close();
-        resolve(null); // timed out — user needs full login
-      }, 15000);
-
-      // Listen for message from popup (sent by the redirect page)
-      const onMessage = (event) => {
-        if (event.origin !== window.location.origin) return;
-        if (!event.data?.ranking_token) return;
-
-        clearTimeout(timeout);
-        window.removeEventListener('message', onMessage);
-        refreshingRef.current = false;
-        popup?.close();
-
-        const { ranking_token, expires_in } = event.data;
-        saveToken(ranking_token, expires_in || 3600);
-        setToken(ranking_token);
+  // ── Auth listener — permanent, auto-refreshes silently ───────────────────
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (user) => {
+      if (user) {
         setIsLoggedIn(true);
-        resolve(ranking_token);
-      };
-
-      window.addEventListener('message', onMessage);
-
-      // If popup was blocked, fall back gracefully
-      if (!popup || popup.closed) {
-        clearTimeout(timeout);
-        window.removeEventListener('message', onMessage);
-        refreshingRef.current = false;
-        resolve(null);
+        setToken(user.uid);
+        setUserProfile({
+          id:       user.uid,
+          name:     user.displayName,
+          email:    user.email,
+          photoURL: user.photoURL,
+          given_name: user.displayName?.split(' ')[0] || 'Student',
+        });
+      } else {
+        setIsLoggedIn(false);
+        setToken(null);
+        setUserProfile(null);
       }
     });
+    return unsub;
   }, []);
 
-  // ── Get a valid token — refreshes silently if expired ────────────────────
-  const getValidToken = useCallback(async () => {
-    const cached = loadToken();
-    if (cached) return cached;
+  // ── Fetch user profile (already in userProfile state) ────────────────────
+  const fetchProfile = useCallback(async () => {
+    return userProfile;
+  }, [userProfile]);
 
-    // Token expired — try silent refresh
-    const fresh = await silentRefresh();
-    return fresh; // null if refresh failed (user must full-login)
-  }, [silentRefresh]);
-
-  // ── Catch token from URL hash (first login OR redirect fallback) ──────────
-  useEffect(() => {
-    const hash = window.location.hash;
-    if (!hash.includes('access_token=')) return;
-    const params     = new URLSearchParams(hash.replace('#', '?'));
-    const at         = params.get('access_token');
-    const expiresIn  = parseInt(params.get('expires_in') || '3600', 10);
-    if (!at) return;
-
-    saveToken(at, expiresIn);
-    setToken(at);
-    setIsLoggedIn(true);
-    window.history.replaceState(null, '', window.location.pathname);
-
-    // If this page was opened as a popup (the silent refresh popup),
-    // send the token back to the opener and close ourselves
-    if (window.opener && !window.opener.closed) {
-      window.opener.postMessage(
-        { ranking_token: at, expires_in: expiresIn },
-        window.location.origin
-      );
-      window.close();
-    }
-  }, []);
-
-  // ── Proactive expiry check every 5 minutes ────────────────────────────────
-  useEffect(() => {
-    if (!isLoggedIn) return;
-    const interval = setInterval(async () => {
-      const expiry = parseInt(localStorage.getItem('ranking_expiry') || '0', 10);
-      const timeLeft = expiry - Date.now();
-      // When <10 minutes left, silently refresh before it expires
-      if (timeLeft < 10 * 60 * 1000 && timeLeft > 0) {
-        console.log('⏰ Token expiring soon, refreshing silently...');
-        await silentRefresh();
-      }
-    }, 5 * 60 * 1000); // check every 5 minutes
-    return () => clearInterval(interval);
-  }, [isLoggedIn, silentRefresh]);
-
-  // ── API methods ───────────────────────────────────────────────────────────
-  const withToken = useCallback(async (fn) => {
-    const t = await getValidToken();
-    if (!t) {
-      setSyncError('Session expired — please sign in again');
-      setIsLoggedIn(false);
-      return null;
-    }
+  // ── Read tracker data written by tracker app ──────────────────────────────
+  const fetchTrackerData = useCallback(async () => {
+    const user = auth.currentUser;
+    if (!user) return null;
     try {
-      return await fn(t);
+      const snap = await getDoc(doc(db, 'users', user.uid, 'data', 'trackerData'));
+      if (!snap.exists()) return null;
+      return snap.data(); // Same shape as localStorage tracker-* keys
     } catch (e) {
-      if (e.message === 'TOKEN_EXPIRED') {
-        // Try one silent refresh then retry
-        const fresh = await silentRefresh();
-        if (fresh) {
-          try { return await fn(fresh); } catch {}
-        }
-        setSyncError('Session expired — please sign in again');
-        setIsLoggedIn(false);
-        clearToken();
-        setToken(null);
-      } else {
-        setSyncError(e.message);
-      }
+      console.error('fetchTrackerData:', e);
+      setSyncError('Could not read tracker data');
       return null;
     }
-  }, [getValidToken, silentRefresh]);
-
-  const fetchProfile = useCallback((t) =>
-    withToken(async (tok) => {
-      const r = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
-        headers: { Authorization: `Bearer ${tok}` }
-      });
-      return r.ok ? r.json() : null;
-    }), [withToken]);
-
-  const fetchTrackerData = useCallback(() =>
-    withToken(async (tok) => {
-      const id = await driveSearch(tok, TRACKER_FILE);
-      if (!id) return null;
-      return driveDownload(tok, id);
-    }), [withToken]);
-
-  const fetchRankingData = useCallback(() =>
-    withToken(async (tok) => {
-      const id = await driveSearch(tok, RANKING_FILE);
-      if (!id) return null;
-      return driveDownload(tok, id);
-    }), [withToken]);
-
-  const saveRankingData = useCallback((data) => {
-    setIsSyncing(true);
-    return withToken(async (tok) => {
-      let id = await driveSearch(tok, RANKING_FILE);
-      if (!id) id = await driveCreate(tok, RANKING_FILE);
-      await driveUpload(tok, id, { ...data, _saved: new Date().toISOString() });
-    }).finally(() => setIsSyncing(false));
-  }, [withToken]);
-
-  const loginWithGoogle = useCallback(() => {
-    if (!CLIENT_ID) { alert('Google Client ID missing — check Vercel env vars'); return; }
-    // Full redirect login (first time, or if popup blocked)
-    const scope = encodeURIComponent(
-      'https://www.googleapis.com/auth/drive.appdata ' +
-      'https://www.googleapis.com/auth/userinfo.profile'
-    );
-    window.location.href =
-      `https://accounts.google.com/o/oauth2/v2/auth` +
-      `?client_id=${CLIENT_ID}` +
-      `&redirect_uri=${encodeURIComponent(REDIRECT_URI)}` +
-      `&response_type=token` +
-      `&scope=${scope}` +
-      `&prompt=consent`;
   }, []);
 
-  const logout = useCallback(() => {
-    clearToken();
-    setToken(null);
-    setIsLoggedIn(false);
+  // ── Read ranking state ────────────────────────────────────────────────────
+  const fetchRankingData = useCallback(async () => {
+    const user = auth.currentUser;
+    if (!user) return null;
+    try {
+      const snap = await getDoc(doc(db, 'users', user.uid, 'data', 'rankingData'));
+      if (!snap.exists()) return null;
+      return snap.data();
+    } catch (e) {
+      console.error('fetchRankingData:', e);
+      return null;
+    }
+  }, []);
+
+  // ── Save ranking state ────────────────────────────────────────────────────
+  const saveRankingData = useCallback(async (data) => {
+    const user = auth.currentUser;
+    if (!user) return false;
+    setIsSyncing(true);
     setSyncError(null);
+    try {
+      await setDoc(
+        doc(db, 'users', user.uid, 'data', 'rankingData'),
+        { ...data, _updatedAt: serverTimestamp() },
+        { merge: true }
+      );
+      return true;
+    } catch (e) {
+      console.error('saveRankingData:', e);
+      setSyncError('Could not save ranking data');
+      return false;
+    } finally {
+      setIsSyncing(false);
+    }
+  }, []);
+
+  // ── Login via popup ───────────────────────────────────────────────────────
+  const loginWithGoogle = useCallback(async () => {
+    const provider = new GoogleAuthProvider();
+    provider.addScope('profile');
+    provider.addScope('email');
+    try {
+      await signInWithPopup(auth, provider);
+    } catch (e) {
+      if (e.code !== 'auth/popup-closed-by-user') {
+        console.error('Login error:', e);
+        setSyncError('Sign-in failed. Please try again.');
+      }
+    }
+  }, []);
+
+  // ── Logout ────────────────────────────────────────────────────────────────
+  const logout = useCallback(async () => {
+    await signOut(auth);
   }, []);
 
   return {
-    token, isLoggedIn, isSyncing, syncError,
+    token, isLoggedIn, isSyncing, syncError, userProfile,
     loginWithGoogle, logout,
     fetchProfile, fetchTrackerData, fetchRankingData, saveRankingData,
   };
