@@ -1,0 +1,33 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap');
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --rank-color: #CD7F32;
+  --rank-glow:  #E8A050;
+  --rank-bg:    #1C1008;
+  --surface:    #111318;
+  --surface2:   #1A1D24;
+  --border:     rgba(255,255,255,0.07);
+  --text:       #E8EAF0;
+  --text-muted: #6B7280;
+}
+
+html, body, #root {
+  height: 100%;
+  background: #0C0D10;
+  color: var(--text);
+  font-family: 'Space Grotesk', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Thin rank-colored scrollbar */
+::-webkit-scrollbar { width: 3px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--rank-color); border-radius: 99px; opacity: 0.5; }
+
+::selection { background: var(--rank-color); color: #000; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
