@@ -21,6 +21,7 @@ export function useRankingState() {
   const [error,          setError]          = useState(null);
   const [username,       setUsernameState]  = useState('');
   const [userProfile,    setUserProfile]    = useState(null);
+  const [trackerMissing, setTrackerMissing] = useState(false);
 
   const botsRef  = useRef(generateBots(BOT_SEED));
   const initDone = useRef(false);
@@ -52,6 +53,8 @@ export function useRankingState() {
       const uname  = rankingRaw?.username || profile?.given_name || 'You';
       setUsernameState(uname);
 
+      if (!trackerRaw) setTrackerMissing(true);
+      else setTrackerMissing(false);
       const events = trackerRaw ? safeJSON(trackerRaw['tracker-events'], []) : [];
 
       const allDates = [...new Set(
@@ -119,6 +122,7 @@ export function useRankingState() {
   const userPosition    = leaderboard.find(e => e.id==='real_user')?.position || null;
 
   return {
+    trackerMissing,
     isLoggedIn: drive.isLoggedIn,
     loginWithGoogle: drive.loginWithGoogle,
     logout: drive.logout,

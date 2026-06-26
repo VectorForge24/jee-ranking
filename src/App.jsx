@@ -120,9 +120,17 @@ function Header({ rank, username, userPosition, onLogout, isSyncing, onHelp, onB
       position:'sticky', top:0, zIndex:10,
     }}>
       <div style={{ display:'flex', alignItems:'center', gap:10 }}>
-        <button onClick={onBadgeClick} title="View profile"
-          style={{ background:'none', border:'none', cursor:'pointer', padding:0,
-            borderRadius:'50%', lineHeight:0 }}>
+        <button onClick={onBadgeClick} title="Tap to view profile"
+          style={{
+            background:'none', border:'none', cursor:'pointer',
+            padding:3, borderRadius:'50%', lineHeight:0,
+            outline:`2px solid ${rank.color}55`,
+            outlineOffset:2,
+            transition:'outline-color 0.2s',
+          }}
+          onMouseEnter={e=>e.currentTarget.style.outlineColor=rank.color}
+          onMouseLeave={e=>e.currentTarget.style.outlineColor=`${rank.color}55`}
+        >
           <RankBadge rank={rank} size="sm" animate={false}/>
         </button>
         <div>
@@ -210,6 +218,7 @@ export default function App() {
     rank, subXP, rankingState, todayResult,
     leaderboard, positionDeltas, userPosition,
     animQueue, consumeAnim, refresh,
+    trackerMissing,
   } = useRankingState();
 
   // Inject CSS vars
@@ -256,6 +265,27 @@ export default function App() {
       />
 
       <main style={{ padding:'16px 16px 0' }}>
+
+        {/* Tracker not yet synced banner */}
+        {trackerMissing && phase === 'ready' && (
+          <div style={{
+            margin:'0 0 12px', padding:'12px 16px', borderRadius:12,
+            background:'rgba(245,196,0,0.08)',
+            border:'1px solid rgba(245,196,0,0.25)',
+            display:'flex', alignItems:'flex-start', gap:10,
+          }}>
+            <span style={{ fontSize:18, flexShrink:0 }}>📡</span>
+            <div>
+              <div style={{ fontSize:13, fontWeight:700, color:'#F5C400', marginBottom:3 }}>
+                Tracker data not found yet
+              </div>
+              <div style={{ fontSize:12, color:'rgba(255,255,255,0.55)', lineHeight:1.5 }}>
+                Open your JEE Tracker, sign in with the same Google account, and make any change (check a task, toggle a setting). That will push your data to the cloud. Then come back and refresh this page.
+              </div>
+            </div>
+          </div>
+        )}
+
         <div style={{ display: tab==='profile'?'block':'none' }}>
           <Profile rank={rank} subXP={subXP} rankingState={rankingState}
             todayResult={todayResult} username={username} setUsername={setUsername}
