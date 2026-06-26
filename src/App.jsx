@@ -6,6 +6,7 @@ import Profile from './components/profile/Profile.jsx';
 import Leaderboard from './components/leaderboard/Leaderboard.jsx';
 import RankBadge from './components/rank/RankBadge.jsx';
 import HelpModal from './components/ui/HelpModal.jsx';
+import ProfileMenu from './components/profile/ProfileMenu.jsx';
 
 // ── Login ─────────────────────────────────────────────────────────────────────
 function LoginScreen({ onLogin }) {
@@ -108,7 +109,7 @@ function ErrorScreen({ error, onRetry, onLogout }) {
 }
 
 // ── Header ─────────────────────────────────────────────────────────────────────
-function Header({ rank, username, userPosition, onLogout, isSyncing, onHelp }) {
+function Header({ rank, username, userPosition, onLogout, isSyncing, onHelp, onBadgeClick }) {
   return (
     <header style={{
       display:'flex', alignItems:'center', justifyContent:'space-between',
@@ -119,7 +120,11 @@ function Header({ rank, username, userPosition, onLogout, isSyncing, onHelp }) {
       position:'sticky', top:0, zIndex:10,
     }}>
       <div style={{ display:'flex', alignItems:'center', gap:10 }}>
-        <RankBadge rank={rank} size="sm" animate={false}/>
+        <button onClick={onBadgeClick} title="View profile"
+          style={{ background:'none', border:'none', cursor:'pointer', padding:0,
+            borderRadius:'50%', lineHeight:0 }}>
+          <RankBadge rank={rank} size="sm" animate={false}/>
+        </button>
         <div>
           <div style={{ fontSize:13, fontWeight:700, color:rank.color,
             fontFamily:"'Space Mono',monospace" }}>
@@ -196,6 +201,7 @@ function BottomNav({ tab, setTab, rank }) {
 export default function App() {
   const [tab,     setTab]     = useState('profile');
   const [helpOpen, setHelpOpen] = useState(false);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
 
   const {
     isLoggedIn, loginWithGoogle, logout,
@@ -234,10 +240,19 @@ export default function App() {
 
       <HelpModal isOpen={helpOpen} onClose={()=>setHelpOpen(false)} rank={rank}/>
 
+      <ProfileMenu
+        isOpen={profileMenuOpen}
+        onClose={()=>setProfileMenuOpen(false)}
+        rank={rank} username={username}
+        userProfile={userProfile} rankingState={rankingState}
+        userPosition={userPosition}
+      />
+
       <Header
         rank={rank} username={username}
         userPosition={userPosition} onLogout={logout}
         isSyncing={isSyncing} onHelp={()=>setHelpOpen(true)}
+        onBadgeClick={()=>setProfileMenuOpen(true)}
       />
 
       <main style={{ padding:'16px 16px 0' }}>
