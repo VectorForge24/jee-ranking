@@ -39,8 +39,17 @@ const app  = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db   = getFirestore(app);
 
+// Note: Firebase's default persistence (browserLocalPersistence) already
+// survives browser restarts indefinitely — no explicit setPersistence call
+// needed. Calling it unconditionally on every load actually carries a real
+// documented risk of wiping the current session on re-init in some SDK
+// versions (firebase/firebase-js-sdk#9319), so it's deliberately left out.
+// The actual fix for both the visible flicker AND the effective
+// "logged out" appearance is the authChecked flag below.
+
 export function useDriveSync() {
   const [isLoggedIn,  setIsLoggedIn]  = useState(false);
+  const [authChecked, setAuthChecked] = useState(false); // has Firebase's first auth check completed yet?
   const [token,       setToken]       = useState(null); // uid used as token
   const [isSyncing,   setIsSyncing]   = useState(false);
   const [syncError,   setSyncError]   = useState(null);
@@ -64,6 +73,7 @@ export function useDriveSync() {
         setToken(null);
         setUserProfile(null);
       }
+      setAuthChecked(true); // fires on EVERY call, whether user was found or not
     });
     return unsub;
   }, []);
@@ -145,7 +155,7 @@ export function useDriveSync() {
   }, []);
 
   return {
-    token, isLoggedIn, isSyncing, syncError, userProfile,
+    token, isLoggedIn, authChecked, isSyncing, syncError, userProfile,
     loginWithGoogle, logout,
     fetchProfile, fetchTrackerData, fetchRankingData, saveRankingData,
   };

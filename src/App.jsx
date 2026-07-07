@@ -212,7 +212,7 @@ export default function App() {
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
 
   const {
-    isLoggedIn, loginWithGoogle, logout,
+    isLoggedIn, authChecked, loginWithGoogle, logout,
     username, setUsername, userProfile,
     phase, error, isSyncing,
     rank, subXP, rankingState, todayResult,
@@ -232,6 +232,12 @@ export default function App() {
 
   const bonusEvents = todayResult?.summary?.bonusEvents || [];
 
+  // Fix: authChecked gates everything below. Before Firebase's first auth
+  // check completes, isLoggedIn defaults to false — without this check,
+  // that false default renders LoginScreen for a moment even when the
+  // person has a genuinely valid session from days ago, which is exactly
+  // the "flickers back to login, then syncing, then leaderboard" symptom.
+  if (!authChecked)     return <LoadingScreen/>;
   if (!isLoggedIn)      return <LoginScreen onLogin={loginWithGoogle}/>;
   if (phase==='loading') return <LoadingScreen/>;
   if (phase==='error')   return <ErrorScreen error={error} onRetry={refresh} onLogout={logout}/>;

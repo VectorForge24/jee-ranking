@@ -67,8 +67,33 @@ export function useRankingState() {
         ? { ...savedState, history: (savedState.history||[]).filter(h => h.date !== TODAY) }
         : INITIAL_STATE;
 
+      // ── Monthly rank reset ────────────────────────────────────────────────
+      // Ranking is a per-month competition (the bot leaderboard already
+      // reseeds every month based on day-of-month). Without this check, a
+      // saved state from a prior month just keeps accumulating XP forever —
+      // which is exactly why June's Conqueror I was still showing in July.
+      // Lifetime achievements and the full history log carry over for the
+      // profile view; only totalXP/rankIdx/subXP/rank reset to Bronze III.
+      const currentMonthKey = TODAY.slice(0,7); // "YYYY-MM"
+      let monthResetFired = false;
+      if (savedState && savedState.history?.length) {
+        const lastEntryMonth = savedState.history[savedState.history.length - 1].date?.slice(0,7);
+        if (lastEntryMonth && lastEntryMonth !== currentMonthKey) {
+          baseState = {
+            ...INITIAL_STATE,
+            achievements: savedState.achievements || [],
+            history: savedState.history,
+            _monthResetAt: TODAY,
+          };
+          monthResetFired = true;
+        }
+      }
+
       const processedDates = new Set(baseState.history.map(h => h.date));
-      const pastDates      = allDates.filter(d => d < TODAY && !processedDates.has(d));
+      // Only reprocess dates WITHIN THE CURRENT MONTH — a prior month's days
+      // are already reflected in history and must not re-contribute XP to
+      // this month's fresh rank after a reset.
+      const pastDates       = allDates.filter(d => d < TODAY && d.slice(0,7) === currentMonthKey && !processedDates.has(d));
       // Today is always reprocessed; isFinalised=false so no mid-day penalty
       const datesToRun     = [...pastDates, ...(allDates.includes(TODAY) ? [TODAY] : [])];
 
@@ -88,7 +113,7 @@ export function useRankingState() {
         }
       }
 
-      if (datesToRun.length > 0) {
+      if (datesToRun.length > 0 || monthResetFired) {
         await drive.saveRankingData({ rankingState: currentState, username: uname });
       }
 
@@ -124,6 +149,7 @@ export function useRankingState() {
   return {
     trackerMissing,
     isLoggedIn: drive.isLoggedIn,
+    authChecked: drive.authChecked,
     loginWithGoogle: drive.loginWithGoogle,
     logout: drive.logout,
     userProfile, username, setUsername,
