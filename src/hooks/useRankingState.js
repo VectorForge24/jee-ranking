@@ -13,6 +13,15 @@ export function useRankingState() {
   const drive = useDriveSync();
 
   const [rankingState,   setRankingState]   = useState(INITIAL_STATE);
+  // Always-current mirror of rankingState. Fixes a real race: setUsername
+  // used to close over `rankingState` directly, which could be stale if it
+  // fired while initialize()'s async reset/save was still in flight —
+  // writing an old copy of rankingState to Firestore and silently
+  // clobbering a just-completed reset. Reading from this ref instead
+  // guarantees every write uses whatever the actual latest state is,
+  // regardless of timing.
+  const rankingStateRef = useRef(rankingState);
+  useEffect(() => { rankingStateRef.current = rankingState; }, [rankingState]);
   const [todayResult,    setTodayResult]    = useState(null);
   const [animQueue,      setAnimQueue]      = useState([]);
   const [leaderboard,    setLeaderboard]    = useState([]);
@@ -153,9 +162,10 @@ export function useRankingState() {
 
   const setUsername = useCallback(async (name) => {
     setUsernameState(name);
-    if (drive.token) await drive.saveRankingData({ rankingState, username: name });
-    rebuildLeaderboard(rankingState, name, todayResult?.xpDelta || 0);
-  }, [drive, rankingState, todayResult, rebuildLeaderboard]);
+    const latest = rankingStateRef.current;
+    if (drive.token) await drive.saveRankingData({ rankingState: latest, username: name });
+    rebuildLeaderboard(latest, name, todayResult?.xpDelta || 0);
+  }, [drive, todayResult, rebuildLeaderboard]);
 
   const consumeAnim = useCallback(() => setAnimQueue(q => q.slice(1)), []);
   const refresh     = useCallback(() => { initDone.current=false; setPhase('idle'); }, []);
