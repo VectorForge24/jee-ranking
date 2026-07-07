@@ -70,22 +70,39 @@ export function useRankingState() {
       // ── Monthly rank reset ────────────────────────────────────────────────
       // Ranking is a per-month competition (the bot leaderboard already
       // reseeds every month based on day-of-month). Without this check, a
-      // saved state from a prior month just keeps accumulating XP forever —
-      // which is exactly why June's Conqueror I was still showing in July.
-      // Lifetime achievements and the full history log carry over for the
-      // profile view; only totalXP/rankIdx/subXP/rank reset to Bronze III.
+      // saved state from a prior month just keeps accumulating XP forever.
+      //
+      // IMPORTANT: this checks _monthResetAt (a marker written the moment
+      // a reset actually fires) as the authoritative signal, NOT just
+      // "is the most recent history entry from this month" — that check
+      // is fragile: if the app was opened even once in the new month
+      // before totalXP had actually been reset, a single current-month
+      // history entry would sit on top of still-unreset totalXP, and
+      // "last entry is this month" would look like "already reset" and
+      // skip the real reset forever. _monthResetAt only flips once the
+      // reset genuinely happens, so it can't be fooled by activity alone.
       const currentMonthKey = TODAY.slice(0,7); // "YYYY-MM"
       let monthResetFired = false;
-      if (savedState && savedState.history?.length) {
-        const lastEntryMonth = savedState.history[savedState.history.length - 1].date?.slice(0,7);
-        if (lastEntryMonth && lastEntryMonth !== currentMonthKey) {
-          baseState = {
-            ...INITIAL_STATE,
-            achievements: savedState.achievements || [],
-            history: savedState.history,
-            _monthResetAt: TODAY,
-          };
-          monthResetFired = true;
+
+      if (savedState) {
+        const alreadyResetThisMonth = savedState._monthResetAt?.slice(0,7) === currentMonthKey;
+
+        if (!alreadyResetThisMonth) {
+          // Either never reset before (pre-fix state), or last reset was a
+          // prior month. Either way, this month needs a fresh reset —
+          // provided there's actually a prior month's XP to reset FROM.
+          const hasOlderActivity = savedState.history?.some(h => h.date && h.date.slice(0,7) !== currentMonthKey);
+          const hasNoResetMarkerButHasXP = !savedState._monthResetAt && (savedState.totalXP || 0) > 0;
+
+          if (hasOlderActivity || hasNoResetMarkerButHasXP) {
+            baseState = {
+              ...INITIAL_STATE,
+              achievements: savedState.achievements || [],
+              history: savedState.history || [],
+              _monthResetAt: TODAY,
+            };
+            monthResetFired = true;
+          }
         }
       }
 
